@@ -1,13 +1,54 @@
-FROM debian:buster-slim as build-env
+FROM debian
 ENV DEBIAN_FRONTEND=noninteractive
 ARG TESTS
 ARG SOURCE_COMMIT
 ARG BUSYBOX_VERSION=1.34.1
 ARG SUPERVISOR_VERSION=4.2.2
 
-RUN apt-get update
-RUN apt-get -y install apt-utils
-RUN apt-get -y install build-essential curl git python3 python3-pip golang shellcheck
+RUN dpkg --add-architecture armhf
+RUN apt update && apt full-upgrade -y
+RUN apt -y install apt-utils
+RUN apt install -y \
+    libsdl2-2.0-0 \
+    libc6:armhf \
+    libncurses5:armhf \
+    libstdc++6:armhf \
+    gcc-arm-linux-gnueabihf \
+    git \
+    make \
+    cmake \
+    python3 \
+    python3-pip \
+    python3-pkg-resources \
+    curl \
+    build-essential \
+    golang \
+    shellcheck \
+    cron \
+    iproute2 \
+    libcurl4 \
+    ca-certificates \
+    procps \
+    locales \
+    unzip \
+    zip \
+    rsync \
+    openssh-client \
+    jq
+
+WORKDIR /build
+RUN git clone https://github.com/ptitSeb/box86
+WORKDIR /build/box86/build
+RUN cmake .. -DRPI4ARM64=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    && make -j4 \
+    && make install
+
+WORKDIR /build
+RUN git clone https://github.com/ptitSeb/box64
+WORKDIR /build/box64/build
+RUN cmake .. -DRPI4ARM64=1 -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    && make -j4 \
+    && make install
 
 WORKDIR /build/busybox
 RUN curl -L -o /tmp/busybox.tar.bz2 https://busybox.net/downloads/busybox-${BUSYBOX_VERSION}.tar.bz2 \
@@ -67,49 +108,22 @@ RUN if [ "${TESTS:-true}" = true ]; then \
             /usr/local/share/valheim/contrib/*.sh \
         ; \
     fi
+
 WORKDIR /
+
 RUN rm -rf /usr/local/lib/
-RUN tar xzvf /build/supervisor/dist/supervisor-*.linux-x86_64.tar.gz
-RUN tar xzvf /build/env2cfg/dist/env2cfg-*.linux-x86_64.tar.gz
-RUN tar xzvf /build/python-a2s/dist/python-a2s-*.linux-x86_64.tar.gz
+RUN tar xzvf /build/supervisor/dist/supervisor-*.tar.gz
+RUN tar xzvf /build/env2cfg/dist/env2cfg-*.tar.gz
+RUN tar xzvf /build/python-a2s/dist/python-a2s-*.tar.gz
 COPY supervisord.conf /usr/local/etc/supervisord.conf
 RUN mkdir -p /usr/local/etc/supervisor/conf.d/ \
     && chmod 640 /usr/local/etc/supervisord.conf
 RUN echo "${SOURCE_COMMIT:-unknown}" > /usr/local/etc/git-commit.HEAD
 
-
-FROM debian:buster-slim
-ENV DEBIAN_FRONTEND=noninteractive
-COPY --from=build-env /usr/local/ /usr/local/
 COPY fake-supervisord /usr/bin/supervisord
 
 RUN groupadd -g "${PGID:-0}" -o valheim \
     && useradd -g "${PGID:-0}" -u "${PUID:-0}" -o --create-home valheim \
-    && dpkg --add-architecture i386 \
-    && apt-get update \
-    && apt-get -y --no-install-recommends install apt-utils \
-    && apt-get -y dist-upgrade \
-    && apt-get -y --no-install-recommends install \
-        libc6-dev \
-        lib32stdc++6 \
-        lib32gcc1 \
-        libsdl2-2.0-0 \
-        libsdl2-2.0-0:i386 \
-        cron \
-        curl \
-        iproute2 \
-        libcurl4 \
-        libcurl4:i386 \
-        ca-certificates \
-        procps \
-        locales \
-        unzip \
-        zip \
-        rsync \
-        openssh-client \
-        jq \
-        python3-minimal \
-        python3-pkg-resources \
     && echo 'LANG="en_US.UTF-8"' > /etc/default/locale \
     && echo "en_US.UTF-8 UTF-8" >> /etc/locale.gen \
     && rm -f /bin/sh \
@@ -154,7 +168,7 @@ RUN groupadd -g "${PGID:-0}" -o valheim \
         /opt/steamcmd/linux32/steamerrorreporter \
         /usr/bin/supervisord \
     && cd "/opt/steamcmd" \
-    && su - valheim -c "/opt/steamcmd/steamcmd.sh +login anonymous +quit" \
+    && su - valheim -c "DEBUGGER=/usr/local/bin/box86 BOX86_DYNAREC=0 /opt/steamcmd/steamcmd.sh +login anonymous +quit" \
     && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* \
     && date --utc --iso-8601=seconds > /usr/local/etc/build.date
 
